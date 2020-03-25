@@ -67,7 +67,7 @@ class Atom:
     """Set new (float*) coodinates [Angstrom]."""
     self.coords = coords
 
-  def SetCoord(self, index, coord):
+  def SetCoord(self, index, coords):
     """Set new (float) ith coordinate [Angstrom]."""
     self.coords[index] = coords
 
