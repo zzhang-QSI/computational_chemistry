@@ -59,7 +59,7 @@ def load_molecule(molecule_file, use_conformation=True):
         coordinates = get_mol_3D_coordinates(mol)
     else:
         coordinates = None
-
+    mol.GetEnergy()
     return mol, coordinates
 
 def multiprocess_load_molecules(files,  use_conformation=True, num_processes=2):

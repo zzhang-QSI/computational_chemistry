@@ -8,7 +8,9 @@ from mmlib.molecule import Molecule
 
 
 
-
+import dgl
+import torch
+from torch.utils.data import DataLoader
 import numpy as np
 import os
 from dgl.data.chem.utils import k_nearest_neighbors
@@ -254,7 +256,7 @@ class XYZDataSet(object):
 
 
 
-        self.labels = np.array([ np.array([mol_x.e_total,mol_x.e_kinetic,mol_x.e_potential,mol_x.e_total,mol_x.e_nonbonded,mol_x.e_bonded,
+        self.labels = torch.stack([ torch.FloatTensor([mol_x.e_total,mol_x.e_kinetic,mol_x.e_potential,mol_x.e_total,mol_x.e_nonbonded,mol_x.e_bonded,
                                   mol_x.e_bound,mol_x.e_elst,mol_x.e_vdw]) for mol_x,mol_coord in proteins_loaded])
         print('Finished cleaning the dataset, '
               'got {:d}/{:d} valid pairs'.format(len(self), len(pdbs)))
@@ -312,7 +314,16 @@ class XYZDataSet(object):
         return item,  self.protein_mols[item], \
                self.graphs[item], self.labels[item]
 
+def collate(data):
+    indices,  protein_mols, graphs, labels = map(list, zip(*data))
+    bg = dgl.batch_hetero(graphs)
+    for nty in bg.ntypes:
+        bg.set_n_initializer(dgl.init.zero_initializer, ntype=nty)
+    for ety in bg.canonical_etypes:
+        bg.set_e_initializer(dgl.init.zero_initializer, etype=ety)
+    labels = torch.stack(labels, dim=0)
 
+    return indices,   protein_mols, bg, labels
 
 if __name__ == '__main__':
     import glob
@@ -323,6 +334,12 @@ if __name__ == '__main__':
     atom_nums=get_atomic_numbers(mol,indices)
     print(atom_nums)
 
-    XYZDataSet(glob.glob("../../../geom/xyzq/*.xyzq"))
 
+    dataset = XYZDataSet(glob.glob("../../../geom/xyzq/*.xyzq"))
+    train_loader = DataLoader(dataset=dataset,
+                              batch_size=2,
+                              shuffle=False,
+                              collate_fn=collate)
 
+    for i_batch, sample_batched in enumerate(train_loader):
+        print("batch",i_batch, len(sample_batched), sample_batched[2] ,sample_batched[3].shape)
