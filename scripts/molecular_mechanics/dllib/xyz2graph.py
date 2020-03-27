@@ -256,7 +256,7 @@ class XYZDataSet(object):
 
 
 
-        self.labels = torch.stack([ torch.FloatTensor([mol_x.e_total,mol_x.e_kinetic,mol_x.e_potential,mol_x.e_total,mol_x.e_nonbonded,mol_x.e_bonded,
+        self.labels = torch.stack([ torch.FloatTensor([mol_x.e_total,mol_x.e_kinetic,mol_x.e_potential,mol_x.e_nonbonded,mol_x.e_bonded,
                                   mol_x.e_bound,mol_x.e_elst,mol_x.e_vdw]) for mol_x,mol_coord in proteins_loaded])
         print('Finished cleaning the dataset, '
               'got {:d}/{:d} valid pairs'.format(len(self), len(pdbs)))

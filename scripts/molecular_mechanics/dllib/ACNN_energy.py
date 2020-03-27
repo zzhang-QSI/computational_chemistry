@@ -69,9 +69,10 @@ class ACNNPredictor(nn.Module):
         truncated_normal_(linear_layer.weight, std=weight_init_stddevs[-1])
         modules.append(linear_layer)
         self.project = nn.Sequential(*modules)
+        self.num_tasks=num_tasks
 
-    def forward(self, batch_size, frag1_node_indices_in_complex, frag2_node_indices_in_complex,
-                ligand_conv_out, protein_conv_out, complex_conv_out):
+    def forward(self, batch_size,
+                protein_conv_out):
         """Perform the prediction.
         Parameters
         ----------
@@ -100,20 +101,15 @@ class ACNNPredictor(nn.Module):
             Predicted protein-ligand binding affinity. B for the number
             of protein-ligand pairs in the batch and O for the number of tasks.
         """
-        ligand_feats = self.project(ligand_conv_out)   # (V1, O)
+
         protein_feats = self.project(protein_conv_out) # (V2, O)
-        complex_feats = self.project(complex_conv_out) # (V1+V2, O)
 
-        ligand_energy = ligand_feats.reshape(batch_size, -1).sum(-1, keepdim=True)   # (B, O)
-        protein_energy = protein_feats.reshape(batch_size, -1).sum(-1, keepdim=True) # (B, O)
 
-        complex_ligand_energy = complex_feats[frag1_node_indices_in_complex].reshape(
-            batch_size, -1).sum(-1, keepdim=True)
-        complex_protein_energy = complex_feats[frag2_node_indices_in_complex].reshape(
-            batch_size, -1).sum(-1, keepdim=True)
-        complex_energy = complex_ligand_energy + complex_protein_energy
+        protein_energy = protein_feats.reshape(batch_size, -1,self.num_tasks).sum(1) # (B, O)
 
-        return complex_energy - (ligand_energy + protein_energy)
+
+
+        return   protein_energy
 
 class ACNN_energy(nn.Module):
     """Atomic Convolutional Networks.
@@ -142,7 +138,7 @@ class ACNN_energy(nn.Module):
 
     def __init__(self, hidden_sizes, weight_init_stddevs, dropouts,
                  features_to_use=None, radial=None, num_tasks=1):
-        super(ACNN, self).__init__()
+        super(ACNN_energy, self).__init__()
 
         if radial is None:
             radial = [[12.0], [0.0, 2.0, 4.0, 6.0, 8.0], [4.0]]
@@ -154,12 +150,10 @@ class ACNN_energy(nn.Module):
         rbf_kernel_means = radial_params[:, 1]
         rbf_kernel_scaling = radial_params[:, 2]
 
-        self.ligand_conv = AtomicConv(interaction_cutoffs, rbf_kernel_means,
-                                      rbf_kernel_scaling, features_to_use)
+
         self.protein_conv = AtomicConv(interaction_cutoffs, rbf_kernel_means,
                                        rbf_kernel_scaling, features_to_use)
-        self.complex_conv = AtomicConv(interaction_cutoffs, rbf_kernel_means,
-                                       rbf_kernel_scaling, features_to_use)
+
         self.predictor = ACNNPredictor(radial_params.shape[0], hidden_sizes,
                                        weight_init_stddevs, dropouts, features_to_use, num_tasks)
 
@@ -176,13 +170,7 @@ class ACNN_energy(nn.Module):
             Predicted protein-ligand binding affinity. B for the number
             of protein-ligand pairs in the batch and O for the number of tasks.
         """
-        ligand_graph = graph[('ligand_atom', 'ligand', 'ligand_atom')]
-        ligand_graph_node_feats = ligand_graph.ndata['atomic_number']
-        assert ligand_graph_node_feats.shape[-1] == 1
-        ligand_graph_distances = ligand_graph.edata['distance']
-        ligand_conv_out = self.ligand_conv(ligand_graph,
-                                           ligand_graph_node_feats,
-                                           ligand_graph_distances)
+
 
         protein_graph = graph[('protein_atom', 'protein', 'protein_atom')]
         protein_graph_node_feats = protein_graph.ndata['atomic_number']
@@ -192,20 +180,39 @@ class ACNN_energy(nn.Module):
                                              protein_graph_node_feats,
                                              protein_graph_distances)
 
-        complex_graph = graph[:, 'complex', :]
-        complex_graph_node_feats = complex_graph.ndata['atomic_number']
-        assert complex_graph_node_feats.shape[-1] == 1
-        complex_graph_distances = complex_graph.edata['distance']
-        complex_conv_out = self.complex_conv(complex_graph,
-                                             complex_graph_node_feats,
-                                             complex_graph_distances)
-
-        frag1_node_indices_in_complex = torch.where(complex_graph.ndata['_TYPE'] == 0)[0]
-        frag2_node_indices_in_complex = list(set(range(complex_graph.number_of_nodes())) -
-                                             set(frag1_node_indices_in_complex.tolist()))
-
         return self.predictor(
-            graph.batch_size,
-            frag1_node_indices_in_complex,
-            frag2_node_indices_in_complex,
-            ligand_conv_out, protein_conv_out, complex_conv_out)
+            graph.batch_size, protein_conv_out)
+
+
+
+if __name__ == '__main__':
+    import glob
+    from mmlib.molecule import Molecule
+    from dllib.xyz2graph import  XYZDataSet,collate
+    from torch.utils.data import DataLoader
+    from torch.optim import Adam
+    mol=Molecule("../../../geom/xyzq/benzene_2.xyzq")
+
+
+
+
+    dataset = XYZDataSet(glob.glob("../../../geom/xyzq/*.xyzq"))
+
+
+    model=ACNN_energy([128, 128, 64],[0.125, 0.125, 0.177, 0.01],[0. , 0. , 0.],num_tasks=8)
+    optim=Adam(model.parameters(),lr=100)
+    i=0
+    while i<1000:
+        i+=1
+        train_loader = DataLoader(dataset=dataset,
+                                  batch_size=3,
+                                  shuffle=True,
+                                  collate_fn=collate)
+        total_loss=0
+        for i_batch, sample_batched in enumerate(train_loader):
+
+            optim.zero_grad()
+            loss=torch.nn.functional.mse_loss(model(sample_batched[2]),sample_batched[3])
+            optim.step()
+            total_loss+=(float(loss))
+        print(total_loss)
