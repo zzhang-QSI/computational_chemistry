@@ -199,20 +199,24 @@ if __name__ == '__main__':
     dataset = XYZDataSet(glob.glob("../../../geom/xyzq/*.xyzq"))
 
 
-    model=ACNN_energy([128, 128, 64],[0.125, 0.125, 0.177, 0.01],[0. , 0. , 0.],num_tasks=8)
-    optim=Adam(model.parameters(),lr=100)
+    model=ACNN_energy([128, 128, 64],[0.125, 0.125, 0.177, 0.01],[0. , 0. , 0.],torch.tensor([
+        1., 6., 7., 8., 9., 11., 12., 15., 16., 17., 19., 20., 25., 26., 27., 28.,
+        29., 30., 34., 35., 38., 48., 53., 55., 80.]),num_tasks=8)
+    optimizer=Adam(model.parameters(),lr=1e-3)
     i=0
     while i<1000:
         i+=1
         train_loader = DataLoader(dataset=dataset,
-                                  batch_size=3,
+                                  batch_size=6,
                                   shuffle=True,
                                   collate_fn=collate)
         total_loss=0
         for i_batch, sample_batched in enumerate(train_loader):
 
-            optim.zero_grad()
+
             loss=torch.nn.functional.mse_loss(model(sample_batched[2]),sample_batched[3])
-            optim.step()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
             total_loss+=(float(loss))
         print(total_loss)
