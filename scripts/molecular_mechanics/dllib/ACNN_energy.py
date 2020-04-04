@@ -1,6 +1,8 @@
 """Atomic Convolutional Networks for Predicting Protein-Ligand Binding Affinity"""
 # pylint: disable=C0103, C0123
 import itertools
+
+import mdtraj
 import torch
 import torch.nn as nn
 
@@ -185,38 +187,112 @@ class ACNN_energy(nn.Module):
 
 
 
+def k_nearest_neighbors_torch(coordinates_torch:torch.FloatTensor, neighbor_cutoff, max_num_neighbors):
+    """Find k nearest neighbors for each atom based on the 3D coordinates.
+
+    Parameters
+    ----------
+    coordinates : numpy.ndarray of shape (N, 3)
+        The 3D coordinates of atoms in the molecule. N for the number of atoms.
+    neighbor_cutoff : float
+        Distance cutoff to define 'neighboring'.
+    max_num_neighbors : int or None.
+        If not None, then this specifies the maximum number of closest neighbors
+        allowed for each atom.
+
+    Returns
+    -------
+    neighbor_list : dict(int -> list of ints)
+        Mapping atom indices to their k nearest neighbors.
+    """
+    coordinates=coordinates_torch.data.numpy()
+    num_atoms = coordinates.shape[0]
+    traj = mdtraj.Trajectory(coordinates.reshape((1, num_atoms, 3)), None)
+    # TODO: may consider to force the covalent bond has maximum distance
+    neighbors = mdtraj.geometry.compute_neighborlist(traj, neighbor_cutoff)
+    srcs, dsts, distances = [], [], []
+    for i in range(num_atoms):
+        delta = coordinates_torch[i] - coordinates_torch[ neighbors[i]]
+        dist = torch.norm(delta, 2,dim=1)
+        if max_num_neighbors is not None and len(neighbors[i]) > max_num_neighbors:
+            sorted_neighbors = list(zip(dist, neighbors[i]))
+            # Sort neighbors based on distance from smallest to largest
+            sorted_neighbors.sort(key=lambda tup: tup[0])
+            dsts.extend([i for _ in range(max_num_neighbors)])
+            srcs.extend([int(sorted_neighbors[j][1]) for j in range(max_num_neighbors)])
+            distances.extend([ sorted_neighbors[j][0].view(1,-1)  for j in range(max_num_neighbors)])
+        else:
+            dsts.extend([i for _ in range(len(neighbors[i]))])
+            srcs.extend(neighbors[i].tolist())
+            distances.extend(dist)
+
+    return srcs, dsts, torch.cat(distances)
+
+
 if __name__ == '__main__':
     import glob
     from mmlib.molecule import Molecule
+    from dllib.mmlib_utils import get_mol_3D_coordinates
     from dllib.xyz2graph import  XYZDataSet,collate
     from torch.utils.data import DataLoader
     from torch.optim import Adam
-    mol=Molecule("../../../geom/xyzq/benzene_2.xyzq")
-
-
-
+    from dgl import graph
 
     dataset = XYZDataSet(glob.glob("../../../geom/xyzq/*.xyzq"))
 
 
-    model=ACNN_energy([128, 128, 64],[0.125, 0.125, 0.177, 0.01],[0. , 0. , 0.],torch.tensor([
+
+
+    energy_model=ACNN_energy([128, 128, 64], [0.125, 0.125, 0.177, 0.01], [0. , 0. , 0.], torch.tensor([
         1., 6., 7., 8., 9., 11., 12., 15., 16., 17., 19., 20., 25., 26., 27., 28.,
-        29., 30., 34., 35., 38., 48., 53., 55., 80.]),num_tasks=8)
-    optimizer=Adam(model.parameters(),lr=1e-3)
+        29., 30., 34., 35., 38., 48., 53., 55., 80.]), num_tasks=8)
+    optimizer=Adam(energy_model.parameters(), lr=1e-4)
     i=0
-    while i<1000:
+    ###train a energy function
+    while i<10:
         i+=1
         train_loader = DataLoader(dataset=dataset,
                                   batch_size=6,
                                   shuffle=True,
                                   collate_fn=collate)
         total_loss=0
+
         for i_batch, sample_batched in enumerate(train_loader):
-
-
-            loss=torch.nn.functional.mse_loss(model(sample_batched[2]),sample_batched[3])
+            loss=torch.nn.functional.mse_loss(energy_model(sample_batched[2]), sample_batched[3])
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             total_loss+=(float(loss))
         print(total_loss)
+
+    refine_graph=dataset[0][2]
+
+    test_loader = DataLoader(dataset=dataset,
+                              batch_size=1,
+                              shuffle=False,
+                              collate_fn=collate)
+
+
+    for i_batch, sample_batched in enumerate(test_loader):
+        ## get coodinates and parse as torch tensor
+        coords = torch.FloatTensor(get_mol_3D_coordinates(sample_batched[1][0]))
+        coords=torch.nn.Parameter(coords)
+        num_protein_atoms=coords.shape[0]
+        optimizer = Adam([coords], lr=1e-4)
+        for optimize_step in range(100):
+            ## compute edge distance
+            protein_srcs,protein_dsts,edge_distance=k_nearest_neighbors_torch(coords, neighbor_cutoff=12.,
+                                              max_num_neighbors=12,)
+
+            protein_graph = graph((protein_srcs, protein_dsts),
+                                  'protein_atom', 'protein', num_protein_atoms)
+            ## optim
+            protein_graph.edata['distance']=edge_distance.reshape(-1,1)
+            protein_graph.nodes['protein_atom'].data['atomic_number']=sample_batched[2].nodes['protein_atom'].data['atomic_number'][:num_protein_atoms]
+            protein_graph.nodes['protein_atom'].data['mask']= sample_batched[2].nodes['protein_atom'].data['mask'][:num_protein_atoms]
+            protein_graph.batch_size=1
+            total_energy=energy_model(protein_graph)[0][0]
+            optimizer.zero_grad()
+            total_energy.backward()
+            optimizer.step()
+            print("predict energy",total_energy,coords[0])
