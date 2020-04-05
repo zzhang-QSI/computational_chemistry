@@ -107,7 +107,7 @@ class ACNNPredictor(nn.Module):
         protein_feats = self.project(protein_conv_out) # (V2, O)
 
 
-        protein_energy = protein_feats.reshape(batch_size, -1,self.num_tasks).sum(1) # (B, O)
+        protein_energy = protein_feats.reshape( batch_size,-1,self.num_tasks).sum(1) # (B, O)
 
 
 
@@ -159,7 +159,7 @@ class ACNN_energy(nn.Module):
         self.predictor = ACNNPredictor(radial_params.shape[0], hidden_sizes,
                                        weight_init_stddevs, dropouts, features_to_use, num_tasks)
 
-    def forward(self, graph):
+    def forward(self, protein_graph):
         """Apply the model for prediction.
         Parameters
         ----------
@@ -174,7 +174,7 @@ class ACNN_energy(nn.Module):
         """
 
 
-        protein_graph = graph[('protein_atom', 'protein', 'protein_atom')]
+
         protein_graph_node_feats = protein_graph.ndata['atomic_number']
         assert protein_graph_node_feats.shape[-1] == 1
         protein_graph_distances = protein_graph.edata['distance']
@@ -182,8 +182,8 @@ class ACNN_energy(nn.Module):
                                              protein_graph_node_feats,
                                              protein_graph_distances)
 
-        return self.predictor(
-            graph.batch_size, protein_conv_out)
+        return self.predictor(protein_graph.batch_size,
+             protein_conv_out)
 
 
 
@@ -258,7 +258,9 @@ if __name__ == '__main__':
         total_loss=0
 
         for i_batch, sample_batched in enumerate(train_loader):
-            loss=torch.nn.functional.mse_loss(energy_model(sample_batched[2]), sample_batched[3])
+            # train_graphs=sample_batched[2][('protein_atom', 'protein', 'protein_atom')]
+            # train_graphs.batch_size=sample_batched[2].batch_size
+            loss=torch.nn.functional.mse_loss(energy_model(sample_batched[2]) , sample_batched[3])
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -286,6 +288,7 @@ if __name__ == '__main__':
 
             protein_graph = graph((protein_srcs, protein_dsts),
                                   'protein_atom', 'protein', num_protein_atoms)
+
             ## optim
             protein_graph.edata['distance']=edge_distance.reshape(-1,1)
             protein_graph.nodes['protein_atom'].data['atomic_number']=sample_batched[2].nodes['protein_atom'].data['atomic_number'][:num_protein_atoms]
