@@ -74,7 +74,7 @@ class ACNNPredictor(nn.Module):
         self.num_tasks=num_tasks
 
     def forward(self, batch_size,
-                protein_conv_out):
+                protein_conv_out,split_idx=None):
         """Perform the prediction.
         Parameters
         ----------
@@ -106,10 +106,17 @@ class ACNNPredictor(nn.Module):
 
         protein_feats = self.project(protein_conv_out) # (V2, O)
 
+        if split_idx is None:
+            protein_energy = protein_feats.reshape( batch_size,-1,self.num_tasks).sum(1) # (B, O)
+        else:
+            frag1_node_indices_in_complex =torch.arange(split_idx).to(protein_feats.device)
+            frag2_node_indices_in_complex = torch.arange(split_idx,protein_feats.shape[0]).to(protein_feats.device)
 
-        protein_energy = protein_feats.reshape( batch_size,-1,self.num_tasks).sum(1) # (B, O)
-
-
+            complex_ligand_energy = protein_feats[frag1_node_indices_in_complex].reshape(
+                 batch_size, -1).sum(-1, keepdim=True)
+            complex_protein_energy = protein_feats[frag2_node_indices_in_complex].reshape(
+                 batch_size, -1).sum(-1, keepdim=True)
+            protein_energy = complex_ligand_energy + complex_protein_energy
 
         return   protein_energy
 
@@ -182,8 +189,15 @@ class ACNN_energy(nn.Module):
                                              protein_graph_node_feats,
                                              protein_graph_distances)
 
-        return self.predictor(protein_graph.batch_size,
+        if "complex" in "".join( protein_graph.canonical_etypes[0]):
+            split_idx=max( torch.where(protein_graph.ndata['_TYPE'] == 0)[0])+1
+            pred_energy = self.predictor(protein_graph.batch_size,
+                                         protein_conv_out,split_idx=split_idx)
+        else:
+            pred_energy= self.predictor(protein_graph.batch_size,
              protein_conv_out)
+
+        return pred_energy
 
 
 

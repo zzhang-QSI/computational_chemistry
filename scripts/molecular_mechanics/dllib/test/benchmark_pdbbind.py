@@ -158,22 +158,77 @@ def pred_binding_energy_for_batch(energy_model, graph):
     complex_graph = graph[:, 'complex', :]
     complex_graph.batch_size = graph.batch_size
 
-    protein_energy = energy_model(protein_graph)
-    ligand_energy = energy_model(ligand_graph)
+    protein_energy = energy_model(protein_graph).reshape(
+            graph.batch_size, -1).sum(-1, keepdim=True)
+    ligand_energy = energy_model(ligand_graph).reshape(
+            graph.batch_size, -1).sum(-1, keepdim=True)
     complex_energy = energy_model(complex_graph)
+
+
     pred_binding_energy = complex_energy - (ligand_energy + protein_energy)
     return pred_binding_energy
 
+
+ACNN_PDBBind_refined_pocket_temporal = {
+    'dataset': 'PDBBind',
+    'subset': 'refined',
+    'load_binding_pocket': True,
+    'random_seed': 123,
+    'frac_train': 0.8,
+    'frac_val': 0.,
+    'frac_test': 0.2,
+    'batch_size': 24,
+    'shuffle': False,
+    'hidden_sizes': [128, 128, 64],
+    'weight_init_stddevs': [0.125, 0.125, 0.177, 0.01],
+    'dropouts': [0.4, 0.4, 0.],
+    'atomic_numbers_considered': torch.tensor([
+        1., 6., 7., 8., 9., 11., 12., 15., 16., 17., 19., 20., 25., 26., 27., 28.,
+        29., 30., 34., 35., 38., 48., 53., 55., 80.]),
+    'radial': [[12.0], [0.0, 2.0, 4.0, 6.0, 8.0], [4.0]],
+    'lr': 0.001,
+    'num_epochs': 350,
+    'metrics': ['pearson_r2', 'mae'],
+    'split': 'temporal'
+}
+
+ACNN_PDBBind_core_pocket_temporal = {
+    'dataset': 'PDBBind',
+    'subset': 'core',
+    'load_binding_pocket': True,
+    'random_seed': 123,
+    'frac_train': 0.8,
+    'frac_val': 0.,
+    'frac_test': 0.2,
+    'batch_size': 24,
+    'shuffle': False,
+    'hidden_sizes': [32, 32, 16],
+    'weight_init_stddevs': [1. / float(np.sqrt(32)), 1. / float(np.sqrt(32)),
+                            1. / float(np.sqrt(16)), 0.01],
+    'dropouts': [0., 0., 0.],
+    'atomic_numbers_considered': torch.tensor([
+        1., 6., 7., 8., 9., 11., 12., 15., 16., 17., 20., 25., 30., 35., 53.]),
+    'radial': [[12.0], [0.0, 4.0, 8.0], [4.0]],
+    'lr': 0.001,
+    'num_epochs': 80,
+    'metrics': ['pearson_r2', 'mae'],
+    'split': 'temporal'
+}
 if __name__ == '__main__':
     split_dataset_cache="PDBBind_cache.pt"
+    experiment_config=dict()
+    experiment_config['core']=ACNN_PDBBind_core_pocket_temporal
+    experiment_config['refined'] =ACNN_PDBBind_refined_pocket_temporal
+    subset='refined'
+    set_random_seed(123)
     if True : #not os.path.isfile(split_dataset_cache):
-        dataset = PDBBind(subset='core',
+        dataset = PDBBind(subset=subset,
                           load_binding_pocket=True,
                           zero_padding=True,num_processes=1)
 
         years = dataset.df['release_year'].values.astype(np.float32)
         indices = np.argsort(years).tolist()
-        frac_list = np.array([ 0.8, 0.,0.2])
+        frac_list = np.array([experiment_config[subset]['frac_train'],experiment_config[subset]['frac_val'],experiment_config[subset]['frac_test'] ] )
         num_data = len(dataset)
         lengths = (num_data * frac_list).astype(int)
         lengths[-1] = num_data - np.sum(lengths[:-1])
@@ -184,21 +239,24 @@ if __name__ == '__main__':
     # else:
     #     train_set, val_set, test_set=torch.load(split_dataset_cache)
 
-    batch_size=24
-    num_epochs=80
-    lr=0.001
+    batch_size=experiment_config[subset]['batch_size']
+    num_epochs=experiment_config[subset]['num_epochs']
+    lr=experiment_config[subset]['lr']
+    device=torch.device("cuda")
     metrics=['pearson_r2', 'mae']
     train_loader = DataLoader(dataset=train_set,
                               batch_size=batch_size,
                               shuffle=True,
                               collate_fn=collate)
 
-    energy_model = ACNN_energy([128, 128, 64], [0.125, 0.125, 0.177, 0.01], [0., 0., 0.], torch.tensor([
-        1., 6., 7., 8., 9., 11., 12., 15., 16., 17., 19., 20., 25., 26., 27., 28.,
-        29., 30., 34., 35., 38., 48., 53., 55., 80.]), num_tasks=8)
+    energy_model = ACNN_energy(hidden_sizes=experiment_config[subset]['hidden_sizes'],
+                               weight_init_stddevs=experiment_config[subset]['weight_init_stddevs'],
+                               dropouts=experiment_config[subset]['dropouts'],
+                               features_to_use= experiment_config[subset]['atomic_numbers_considered'],radial = experiment_config[subset]['radial'],
+                               num_tasks=1).to(device)
     optimizer = Adam(energy_model.parameters(), lr=lr)
     descriptor=tqdm.trange(num_epochs)
-    train_labels = torch.stack([train_set.dataset.labels[i] for i in train_set.indices])
+    train_labels = torch.stack([train_set.dataset.labels[i] for i in train_set.indices]).to(device)
     train_mean = torch.mean(train_labels)
     train_std= torch.std(train_labels)
     train_meter = Meter(train_mean, train_std)
@@ -206,16 +264,18 @@ if __name__ == '__main__':
         epoch_loss=0
         for i_batch, batch_data in enumerate(train_loader):
             indices, ligand_mols, protein_mols, graph, labels = batch_data
+            graph,labels= graph.to(device),labels.to(device)
+
             pred_binding_energy=pred_binding_energy_for_batch(energy_model,graph)
 
-            prediction=pred_binding_energy[:,0].view(-1,1)
-            loss=torch.nn.functional.mse_loss(prediction,labels)
+            prediction=pred_binding_energy.view(-1,1)
+            loss=torch.nn.functional.mse_loss(prediction,(labels - train_mean) / train_std)
             train_meter.update(prediction, labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            epoch_loss+=loss.data.numpy()
-        descriptor.set_description("train loss:%.6f" % epoch_loss)
+            epoch_loss+=loss.data
+        # descriptor.set_description("train loss:%.6f" % epoch_loss)
 
         avg_loss = epoch_loss / len(train_loader.dataset)
         total_scores = {metric: train_meter.compute_metric(metric) for metric in metrics}
@@ -234,9 +294,10 @@ if __name__ == '__main__':
     with torch.no_grad():
         for batch_id, batch_data in enumerate(test_loader):
             indices, ligand_mols, protein_mols, graph, labels = batch_data
+            graph, labels = graph.to(device), labels.to(device)
             pred_binding_energy=pred_binding_energy_for_batch(energy_model,graph)
 
-            prediction=pred_binding_energy[:,0].view(-1,1)
+            prediction=pred_binding_energy.view(-1,1)
             eval_meter.update(prediction, labels)
     test_scores  = {metric: eval_meter.compute_metric(metric) for metric in metrics}
     test_msg = update_msg_from_scores('test results', test_scores)
