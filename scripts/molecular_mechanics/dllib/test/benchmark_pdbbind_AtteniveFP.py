@@ -47,6 +47,15 @@ def hetero2homo_graph(hetero_graph,mol):
 
 
 
+def collate2(data):
+    indices, protein_graph_list, ligand_graph_list, complex_graph_list, labels = map(list, zip(*data))
+    protein_graph_bg = dgl.batch(protein_graph_list)
+    ligand_graph_bg = dgl.batch(ligand_graph_list)
+    complex_graph_bg = dgl.batch(complex_graph_list)
+
+    labels = torch.stack(labels, dim=0)
+
+    return indices, protein_graph_bg, ligand_graph_bg, complex_graph_bg, labels
 def collate(data):
     indices, ligand_mols, protein_mols, graphs, labels = map(list, zip(*data))
     protein_graph_list=[]
@@ -245,6 +254,41 @@ ACNN_PDBBind_core_pocket_temporal = {
     'metrics': ['pearson_r2', 'mae'],
     'split': 'temporal'
 }
+
+
+class PDBBind2(PDBBind):
+    def __init__(self,*args, **kwargs):
+        super(PDBBind2, self).__init__(*args, **kwargs)
+        self.protein_graphs=dict()
+        self.ligand_graphs = dict()
+        self.complex_graphs = dict()
+
+
+    def __getitem__(self, item):
+        """Get the datapoint associated with the index.
+        """
+        graph=self.graphs[item]
+        if item not in self.protein_graphs:
+            g0 = graph[('protein_atom', 'protein', 'protein_atom')]
+            g0 = g0.subgraph({"protein_atom": torch.where(g0.ndata['atomic_number'] > 0)[0].numpy().tolist()})
+            protein_graph = hetero2homo_graph(g0, self.protein_mols[item])
+            self.protein_graphs[item]=protein_graph
+
+            g1 = graph[('ligand_atom', 'ligand', 'ligand_atom')]
+            g1 = g1.subgraph({"ligand_atom": torch.where(g1.ndata['atomic_number'] > 0)[0].numpy().tolist()})
+            ligand_graph = hetero2homo_graph(g1, self.ligand_mols[item])
+            self.ligand_graphs[item]=ligand_graph
+
+            complex_mol = rdkit.Chem.rdmolops.CombineMols(self.protein_mols[item],self.ligand_mols[item] )
+            g2 = graph[:, 'complex', :]
+            g2 = g2.subgraph({"ligand_atom+protein_atom": torch.where(g2.ndata['atomic_number'] > 0)[0].numpy().tolist()})
+            complex_graph = hetero2homo_graph(g2, complex_mol)
+            self.complex_graphs[item]=complex_graph
+
+        return item, self.protein_graphs[item], self.ligand_graphs[item], \
+               self.complex_graphs[item], self.labels[item]
+
+
 if __name__ == '__main__':
     split_dataset_cache="PDBBind_cache.pt"
     experiment_config=dict()
@@ -257,7 +301,7 @@ if __name__ == '__main__':
     metrics=['pearson_r2', 'mae']
     set_random_seed(123)
     if True : #not os.path.isfile(split_dataset_cache):
-        dataset = PDBBind(subset=subset,
+        dataset = PDBBind2(subset=subset,
                           load_binding_pocket=True, sanitize=True,
                           zero_padding=True,num_processes=4)
 
@@ -281,15 +325,15 @@ if __name__ == '__main__':
     train_loader = DataLoader(dataset=train_set,
                               batch_size=batch_size,
                               shuffle=True,
-                              collate_fn=collate)
+                              collate_fn=collate2)
 
     energy_model = AttentiveFP_energy( node_feat_size=74,
                  edge_feat_size=1,
                  num_layers=2,
                  num_timesteps=2,
-                 graph_feat_size=20,
+                 graph_feat_size=experiment_config[subset]['hidden_sizes'][0],
                  output_size=8,
-                 dropout=0.2 ).to(device)
+                 dropout= experiment_config[subset]['dropouts'][0]).to(device)
     optimizer = Adam(energy_model.parameters(), lr=lr)
     descriptor=tqdm.trange(num_epochs)
     train_labels = torch.stack([train_set.dataset.labels[i] for i in train_set.indices]).to(device)
@@ -326,7 +370,7 @@ if __name__ == '__main__':
     test_loader = DataLoader(dataset=test_set,
                               batch_size=batch_size,
                               shuffle=False,
-                              collate_fn=collate)
+                              collate_fn=collate2)
     with torch.no_grad():
         for batch_id, batch_data in enumerate(test_loader):
             indices, protein_graph_bg, ligand_graph_bg, complex_graph_bg, labels = batch_data
