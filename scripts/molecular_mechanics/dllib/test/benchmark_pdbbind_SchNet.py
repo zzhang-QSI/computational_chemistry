@@ -15,7 +15,7 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 import  tqdm
 
-from dllib.AttentiveFP_energy import AttentiveFP_energy,hetero2homo_graph
+from dllib.SchNet_energy import SchNet_energy,hetero2homo_graph
 
 
 def set_random_seed(seed=0):
@@ -327,13 +327,11 @@ if __name__ == '__main__':
                               shuffle=True,
                               collate_fn=collate2)
 
-    energy_model = AttentiveFP_energy( node_feat_size=74,
-                 edge_feat_size=1,
-                 num_layers=2,
-                 num_timesteps=2,
-                 graph_feat_size=experiment_config[subset]['hidden_sizes'][0],
-                 output_size=8,
-                 dropout= experiment_config[subset]['dropouts'][0]).to(device)
+    energy_model = SchNet_energy( norm=True,
+                dim=experiment_config[subset]['hidden_sizes'][0],
+                 output_dim=8 ).to(device)
+
+    energy_model.base_model.set_mean_std(train_set.dataset.labels[train_set.indices].mean() ,train_set.dataset.labels[train_set.indices].std() )
     optimizer = Adam(energy_model.parameters(), lr=lr)
     descriptor=tqdm.trange(num_epochs)
     train_labels = torch.stack([train_set.dataset.labels[i] for i in train_set.indices]).to(device)

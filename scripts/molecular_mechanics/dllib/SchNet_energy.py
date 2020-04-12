@@ -5,50 +5,56 @@ import mdtraj
 import torch
 import torch.nn as nn
 
-from dgl.model_zoo.chem import AttentiveFP
+from dgl.model_zoo.chem import SchNet
 from dgl import graph
 from dgl.heterograph import  AdaptedHeteroGraph
 from dgl.data.chem import CanonicalBondFeaturizer, CanonicalAtomFeaturizer
 from dgl.data.chem.utils.featurizers import one_hot_encoding
 
-class AttentiveFP_energy(nn.Module):
+class SchNet_energy(nn.Module):
     """`Pushing the Boundaries of Molecular Representation for Drug Discovery with the Graph
      Attention Mechanism <https://www.ncbi.nlm.nih.gov/pubmed/31408336>`__
 
-     Parameters
-     ----------
-     node_feat_size : int
-         Size for the input node (atom) features.
-     edge_feat_size : int
-         Size for the input edge (bond) features.
-     num_layers : int
-         Number of GNN layers.
-     num_timesteps : int
-         Number of timesteps for updating the molecular representation with GRU.
-     graph_feat_size : int
-         Size of the learned graph representation (molecular fingerprint).
-     output_size : int
-         Size of the prediction (target labels).
-     dropout : float
-         The probability for performing dropout.
-     """
+
+    Parameters
+    ----------
+    dim : int
+        Size for atom embeddings, default to be 64.
+    cutoff : float
+        Radius cutoff for RBF, default to be 5.0.
+    output_dim : int
+        Number of target properties to predict, default to be 1.
+    width : int
+        Width in RBF, default to 1.
+    n_conv : int
+        Number of conv (interaction) layers, default to be 1.
+    norm : bool
+        Whether to normalize the output atom representations, default to be False.
+    atom_ref : Atom embeddings or None
+        If None, random representation initialization will be used. Otherwise,
+        they will be used to initialize atom representations. Default to be None.
+    pre_train : Atom embeddings or None
+        If None, random representation initialization will be used. Otherwise,
+        they will be used to initialize atom representations. Default to be None.
+    """
 
     def __init__(self,
-                 node_feat_size,
-                 edge_feat_size,
-                 num_layers,
-                 num_timesteps,
-                 graph_feat_size,
-                 output_size,
-                 dropout):
-        super(AttentiveFP_energy, self).__init__()
-        self.base_model=AttentiveFP(node_feat_size,
-                 edge_feat_size,
-                 num_layers,
-                 num_timesteps,
-                 graph_feat_size,
-                 output_size,
-                 dropout)
+                 dim=64,
+                 cutoff=5.0,
+                 output_dim=1,
+                 width=1,
+                 n_conv=3,
+                 norm=False,
+                 atom_ref=None,
+                 pre_train=None):
+        super(SchNet_energy, self).__init__()
+        self.base_model=SchNet(dim,
+                 cutoff,
+                 output_dim,
+                 width,
+                 n_conv,
+                 norm,
+                 atom_ref,pre_train)
 
     def forward(self, protein_graph ):
         """Apply the model for prediction.
@@ -66,7 +72,7 @@ class AttentiveFP_energy(nn.Module):
 
 
 
-        protein_graph_node_feats = protein_graph.ndata['h']
+        protein_graph_node_feats = torch.argmax(protein_graph.ndata['h'][:,:44],dim=1)
 
         protein_graph_distances = protein_graph.edata['e']
 
@@ -95,12 +101,7 @@ def collate(data):
 
     indices,  protein_mols, graphs, labels = map(list, zip(*data))
     for i in range(len(protein_mols)):
-        # rd_mol=mmmol2rdkitmol(protein_mols[i])
-        # ### convert DGL hetero graph to DGL graph
-        # homo_graph=dgl.DGLGraph()
-        # homo_graph.from_networkx( graphs[i].to_networkx())
-        # homo_graph.ndata.update(atom_featurizer(rd_mol))
-        # homo_graph.edata['e']=graphs[i].edata['distance']
+
         graphs[i]=hetero2homo_graph(graphs[i],protein_mols[i])
 
 
@@ -126,13 +127,7 @@ if __name__ == '__main__':
 
     #######add features to edge and node ##########
 
-    energy_model=AttentiveFP_energy( node_feat_size=74,
-                 edge_feat_size=1,
-                 num_layers=2,
-                 num_timesteps=2,
-                 graph_feat_size=200,
-                 output_size=8,
-                 dropout=0.2 )
+    energy_model=SchNet_energy(norm=True, output_dim=8  )
     optimizer=Adam(energy_model.parameters(), lr=10 ** (-2.5))
     i=0
     ###train a energy function
@@ -143,7 +138,7 @@ if __name__ == '__main__':
                                   shuffle=True,
                                   collate_fn=collate)
         total_loss=0
-
+        energy_model.base_model.set_mean_std(dataset.labels.mean(),dataset.labels.std())
         for i_batch, sample_batched in enumerate(train_loader):
             # train_graphs=sample_batched[2][('protein_atom', 'protein', 'protein_atom')]
             # train_graphs.batch_size=sample_batched[2].batch_size
