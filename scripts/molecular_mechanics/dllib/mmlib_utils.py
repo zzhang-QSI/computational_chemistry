@@ -98,3 +98,5 @@ def multiprocess_load_molecules(files,  use_conformation=True, num_processes=2):
             mols_loaded = mols_loaded.get()
 
     return mols_loaded
+
+

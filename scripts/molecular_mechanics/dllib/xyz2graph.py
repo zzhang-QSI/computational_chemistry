@@ -41,6 +41,7 @@ def filter_out_hydrogens(mol):
     return indices_left
 
 def get_atomic_numbers(mol, indices):
+    from dllib.xyz2mol import int_atom
     """Get the atomic numbers for the specified atoms.
 
     Parameters
@@ -58,7 +59,7 @@ def get_atomic_numbers(mol, indices):
     atomic_numbers = []
     for i in indices:
         atom = mol.atoms[i]
-        atomic_numbers.append(int(atom.mass))
+        atomic_numbers.append(int_atom(atom.element))
     return atomic_numbers
 
 def XYZ_graph_construction_and_featurization( protein_mol,
@@ -317,6 +318,7 @@ class XYZDataSet(object):
 def collate(data):
     indices,  protein_mols, graphs, labels = map(list, zip(*data))
     bg = dgl.batch_hetero(graphs)
+    # bg= dgl.batch(graphs)
     for nty in bg.ntypes:
         bg.set_n_initializer(dgl.init.zero_initializer, ntype=nty)
     for ety in bg.canonical_etypes:

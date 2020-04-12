@@ -190,14 +190,14 @@ class Optimization:
     """Steepest descent optimization step direction vector."""
     self.step_dir = self.mol.g_total
 
-  def GetCGStepDir(self):
+  def _GetCGStepDir(self):
     """Conjugate gradient optimization step direction vector."""
     if self.n_iter <= 1:
       self.hvec = self.mol.g_total
       gamma = 0.0
     else:
       v1 = self.traj.grad[-1] - self.traj.grad[-2]
-      v1 = v1.reshape((1, const.NUMDIM * self.mol.n_atoms))
+      v1 = v1.reshape((1, const.NUMDIM , self.mol.n_atoms))
       v2 = self.traj.grad[-1].reshape((const.NUMDIM, self.mol.n_atoms, 1))
       gamma  = numpy.linalg.norm(numpy.dot(v1, v2))
       gamma *= 1.0 / numpy.linalg.norm(self.traj.grad[-1])**2

@@ -15,7 +15,8 @@ from mmlib import geomcalc
 from mmlib import gradient
 from mmlib import param
 from mmlib import topology
-
+import rdkit.Chem
+PeriodicTable=rdkit.Chem.GetPeriodicTable()
 class Atom:
   """Atom class for atomic geometry and parameter data.
   
@@ -112,6 +113,19 @@ class Atom:
     """Set new (float*) accelerations [Angstrom/(ps^2)]."""
     self.paccs = paccs
 
+  def GetSymbol(self):
+    return self.element
+  def GetDegree(self):
+    return self.degree
+
+  def GetImplicitValence(self):
+    return 8-self.charge
+
+  def GetFormalCharge(self):
+    return self.charge
+
+  def GetNumRadicalElectrons(self):
+    return self.charge
 
 class Bond:
   """Bond class for bond geometry and parameter data.
@@ -431,6 +445,7 @@ class Molecule:
       total: Sum of all energy terms.
   """
   def __init__(self, infile_name):
+
     self.infile = os.path.realpath(infile_name)
     self.indir = os.path.dirname(self.infile)
     self.filetype = self.infile.split('.')[-1]
@@ -493,6 +508,12 @@ class Molecule:
     self.g_nonbonded = numpy.zeros((self.n_atoms, const.NUMDIM))
     self.g_total = numpy.zeros((self.n_atoms, const.NUMDIM))
 
+
+
+  def GetNumAtoms(self):
+    return self.n_atoms
+  def GetAtomWithIdx(self,i):
+    return self.atoms[i]
   def ReadInXYZQ(self):
     """Read in xyzq data from .xyzq input file."""
     input_rows = fileio.GetFileStringArray(self.infile)
@@ -531,6 +552,10 @@ class Molecule:
     self.n_angles = len(self.angles)
     self.n_torsions = len(self.torsions)
     self.n_outofplanes = len(self.outofplanes)
+
+    ##assign degree to atom
+    for i in range(self.n_atoms):
+        self.atoms[i].degree=len(self.bond_graph[i] )
 
   def GetEnergy(self, kintype=None):
     """Calculate (float) energy [kcal/mol] and all energy components."""
@@ -663,5 +688,5 @@ class Molecule:
 
   def PrintGradient(self):
     """Print gradient data to screen."""
-    comment = mol.grad_type + ' total gradient'
-    print(fileio.GetPrintGradientString(mol.atoms, self.g_total, comment))
+    comment = self.grad_type + ' total gradient'
+    print(fileio.GetPrintGradientString(self.atoms, self.g_total, comment))
