@@ -329,8 +329,8 @@ if __name__ == '__main__':
 
     energy_model = MPNN_energy( node_input_dim=74,
                  edge_input_dim=1,
-
-                 node_hidden_dim=experiment_config[subset]['hidden_sizes'][0],
+                 edge_hidden_dim=2,
+                 node_hidden_dim=10,
                  output_dim=8 ).to(device)
     optimizer = Adam(energy_model.parameters(), lr=lr)
     descriptor=tqdm.trange(num_epochs)
