@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 import  tqdm
 
 from dllib.SchNet_energy import SchNet_energy,hetero2homo_graph
-
+import  mmlib.molecule
 
 def set_random_seed(seed=0):
     """Set random seed.
@@ -161,6 +161,10 @@ def update_msg_from_scores(msg, scores):
 
 
 def mol2energy(mol):
+
+    mmol=mmlib.molecule.Molecule(mol)
+    mmol.GetEnergy()
+    return mmol.e_potential
     res = rdkit.Chem.AllChem.MMFFOptimizeMoleculeConfs(mol)
     return res[0][1]
     ff = rdkit.Chem.AllChem.UFFGetMoleculeForceField(mol)

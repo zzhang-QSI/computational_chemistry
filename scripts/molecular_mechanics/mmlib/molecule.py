@@ -393,7 +393,7 @@ class Molecule:
   dielectric, origin and virial.
   
   Args:
-    infile_name (str): xyzq or prm input file with molecule data.
+    infile_name_or_rdmol (str): xyzq or prm input file with molecule data.
   
   Attributes:
     infile (str): Absolute path to 'infile_name'
@@ -444,12 +444,8 @@ class Molecule:
       kinetic: Energy of motion (no gradient).
       total: Sum of all energy terms.
   """
-  def __init__(self, infile_name):
+  def __init__(self, infile_name_or_rdmol):
 
-    self.infile = os.path.realpath(infile_name)
-    self.indir = os.path.dirname(self.infile)
-    self.filetype = self.infile.split('.')[-1]
-    self.name = os.path.splitext(os.path.basename(self.infile))[0]
 
     self.atoms = []
     self.bonds = []
@@ -490,12 +486,26 @@ class Molecule:
     self.e_kinetic = 0.0
     self.e_total = 0.0
 
-    if (self.filetype == 'xyzq'):
-      self.ReadInXYZQ()
-      self.GetTopology()
-    elif (self.filetype == 'prm'):
-      self.ReadInPrm()
-      self.UpdateInternals()
+    if isinstance(infile_name_or_rdmol,str):
+      self.infile = os.path.realpath(infile_name_or_rdmol)
+      self.indir = os.path.dirname(self.infile)
+      self.filetype = self.infile.split('.')[-1]
+      self.name = os.path.splitext(os.path.basename(self.infile))[0]
+      if (self.filetype == 'xyzq'):
+        self.ReadInXYZQ()
+        self.GetTopology()
+      elif (self.filetype == 'prm'):
+        self.ReadInPrm()
+        self.UpdateInternals()
+    else:
+      import rdkit.Chem
+      ### create atoms
+      rdmol=infile_name_or_rdmol
+      rd_atoms=rdmol.GetAtoms()
+      coords = infile_name_or_rdmol.GetConformer().GetPositions()
+      for i, atom in enumerate(rd_atoms):
+        self.atoms.append(Atom(atom.GetSymbol() ,coords[i],atom.GetFormalCharge()))
+      self.n_atoms=len(self.atoms)
         
     self.g_bonds = numpy.zeros((self.n_atoms, const.NUMDIM))
     self.g_angles = numpy.zeros((self.n_atoms, const.NUMDIM))
